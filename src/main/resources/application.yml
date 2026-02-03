@@ -116,6 +116,10 @@ spring:
     activate:
       on-profile: prod
 
+kyc:
+  validation:
+    skip-cert-expiry-check: true
+
 server:
   port: ${PORT:8080}
   ssl:
