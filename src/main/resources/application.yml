@@ -4,13 +4,13 @@
 spring:
   application:
     name: offline-kyc-validation
-  
+
   servlet:
     multipart:
       enabled: true
       max-file-size: 5MB
       max-request-size: 10MB
-  
+
   jackson:
     default-property-inclusion: non_null
     serialization:
@@ -34,28 +34,30 @@ kyc:
     intermediate:
       cert:
         path: /certs/uidai-intermediate-ca.cer
-    
     # Certificate refresh check interval (in hours)
     cert-check-interval: 24
-  
+
   validation:
     # Maximum file size for XML upload
     max-file-size: 5242880  # 5MB
-    
+
     # Temporary directory for processing
     temp-dir: /tmp/kyc-validation
-    
+
     # Enable photo validation
     photo-validation-enabled: true
-    
+
     # Minimum photo size in bytes
     min-photo-size: 1000
-    
+
+    # Skip certificate expiry check (default: false)
+    skip-cert-expiry-check: false
+
     # Rate limiting
     rate-limit:
       enabled: true
       requests-per-minute: 60
-  
+
   # Data retention (in days)
   retention:
     audit-logs: 3650  # 10 years as per RBI
@@ -65,7 +67,7 @@ kyc:
 security:
   # Disable for dev, enable in production
   enabled: ${SECURITY_ENABLED:false}
-  
+
   # API key validation (if enabled)
   api-key:
     enabled: ${API_KEY_ENABLED:false}
@@ -92,11 +94,11 @@ logging:
     root: INFO
     com.sberbank.kyc: DEBUG
     org.apache.xml.security: WARN
-  
+
   # Separate audit log
   file:
     name: logs/kyc-validation.log
-  
+
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
     file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
@@ -116,10 +118,6 @@ spring:
     activate:
       on-profile: prod
 
-kyc:
-  validation:
-    skip-cert-expiry-check: true
-
 server:
   port: ${PORT:8080}
   ssl:
@@ -130,13 +128,19 @@ security:
   api-key:
     enabled: true
 
+kyc:
+  validation:
+    skip-cert-expiry-check: true
+    rate-limit:
+      enabled: flase
+
 logging:
   level:
     root: WARN
     com.sberbank.kyc: INFO
 
 ---
-# Development Profile  
+# Development Profile
 spring:
   config:
     activate:
