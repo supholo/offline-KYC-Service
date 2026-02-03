@@ -1,0 +1,154 @@
+# Offline Aadhaar KYC Validation - Application Configuration
+# ============================================================
+
+spring:
+  application:
+    name: offline-kyc-validation
+  
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 5MB
+      max-request-size: 10MB
+  
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+
+# Server Configuration
+server:
+  port: 8080
+  servlet:
+    context-path: /
+  compression:
+    enabled: true
+    mime-types: application/json,application/xml
+
+# KYC Validation Configuration
+kyc:
+  uidai:
+    root:
+      cert:
+        path: classpath:certs/uidai-root-ca.cer
+    intermediate:
+      cert:
+        path: /certs/uidai-intermediate-ca.cer
+    
+    # Certificate refresh check interval (in hours)
+    cert-check-interval: 24
+  
+  validation:
+    # Maximum file size for XML upload
+    max-file-size: 5242880  # 5MB
+    
+    # Temporary directory for processing
+    temp-dir: /tmp/kyc-validation
+    
+    # Enable photo validation
+    photo-validation-enabled: true
+    
+    # Minimum photo size in bytes
+    min-photo-size: 1000
+    
+    # Rate limiting
+    rate-limit:
+      enabled: true
+      requests-per-minute: 60
+  
+  # Data retention (in days)
+  retention:
+    audit-logs: 3650  # 10 years as per RBI
+    temp-files: 1     # Delete after 1 day
+
+# Security Configuration
+security:
+  # Disable for dev, enable in production
+  enabled: ${SECURITY_ENABLED:false}
+  
+  # API key validation (if enabled)
+  api-key:
+    enabled: ${API_KEY_ENABLED:false}
+    header-name: X-API-Key
+
+# Actuator Endpoints
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+  health:
+    diskspace:
+      enabled: true
+    ssl:
+      enabled: true
+
+# Logging Configuration
+logging:
+  level:
+    root: INFO
+    com.sberbank.kyc: DEBUG
+    org.apache.xml.security: WARN
+  
+  # Separate audit log
+  file:
+    name: logs/kyc-validation.log
+  
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+
+# OpenAPI Documentation
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+
+---
+# Production Profile
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+server:
+  port: 8443
+  ssl:
+    enabled: true
+    key-store: classpath:keystore.p12
+    key-store-password: ${SSL_KEYSTORE_PASSWORD}
+    key-store-type: PKCS12
+
+security:
+  enabled: true
+  api-key:
+    enabled: true
+
+logging:
+  level:
+    root: WARN
+    com.sberbank.kyc: INFO
+
+---
+# Development Profile  
+spring:
+  config:
+    activate:
+      on-profile: dev
+
+logging:
+  level:
+    root: DEBUG
+    com.sberbank.kyc: TRACE
+
+kyc:
+  validation:
+    rate-limit:
+      enabled: false
+    # WARNING: Only for development/testing with expired certificates
+    skip-cert-expiry-check: true

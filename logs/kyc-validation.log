@@ -1,0 +1,24 @@
+2026-02-03 13:04:59.164 [main] INFO  c.sberbank.kyc.OfflineKYCApplication - Starting OfflineKYCApplication using Java 21.0.8 with PID 47065 (/Users/supholokar/Documents/Code/offline-kyc/target/classes started by supholokar in /Users/supholokar/Documents/Code/offline-kyc)
+2026-02-03 13:04:59.166 [main] DEBUG c.sberbank.kyc.OfflineKYCApplication - Running with Spring Boot v3.2.0, Spring v6.1.1
+2026-02-03 13:04:59.167 [main] INFO  c.sberbank.kyc.OfflineKYCApplication - No active profile set, falling back to 1 default profile: "default"
+2026-02-03 13:04:59.495 [main] INFO  o.s.b.w.e.tomcat.TomcatWebServer - Tomcat initialized with port 8080 (http)
+2026-02-03 13:04:59.500 [main] INFO  o.a.catalina.core.StandardService - Starting service [Tomcat]
+2026-02-03 13:04:59.500 [main] INFO  o.a.catalina.core.StandardEngine - Starting Servlet engine: [Apache Tomcat/10.1.16]
+2026-02-03 13:04:59.528 [main] INFO  o.a.c.c.C.[Tomcat].[localhost].[/] - Initializing Spring embedded WebApplicationContext
+2026-02-03 13:04:59.528 [main] INFO  o.s.b.w.s.c.ServletWebServerApplicationContext - Root WebApplicationContext: initialization completed in 347 ms
+2026-02-03 13:04:59.557 [main] INFO  c.s.kyc.service.OfflineKYCService - UIDAI Root CA is within validity period. ValidTill=Tue Feb 17 03:57:40 IST 2026
+2026-02-03 13:04:59.558 [main] INFO  c.s.kyc.service.OfflineKYCService - UIDAI Root CA loaded successfully. Subject=CN=DS Unique Identification Authority of India 05,2.5.4.51=#13144161646861617220486561647175617274657273,STREET=Bangla Sahib Road Behind Kali Mandir GoleMarket,ST=Delhi,2.5.4.17=#1306313130303031,O=UNIQUE IDENTIFICATION AUTHORITY OF INDIA,C=IN, Serial=1648976373
+2026-02-03 13:04:59.558 [main] INFO  c.s.kyc.service.OfflineKYCService - UIDAI root certificate loaded successfully
+2026-02-03 13:04:59.559 [main] DEBUG c.s.kyc.service.OfflineKYCService - Created temp directory: /tmp/kyc-validation
+2026-02-03 13:04:59.559 [main] INFO  c.s.kyc.service.OfflineKYCService - Offline KYC Service initialized successfully. Temp dir: /tmp/kyc-validation
+2026-02-03 13:04:59.700 [main] INFO  o.s.b.w.e.tomcat.TomcatWebServer - Tomcat started on port 8080 (http) with context path ''
+2026-02-03 13:04:59.704 [main] INFO  c.sberbank.kyc.OfflineKYCApplication - Started OfflineKYCApplication in 0.704 seconds (process running for 0.869)
+2026-02-03 13:05:56.116 [http-nio-8080-exec-1] INFO  o.a.c.c.C.[Tomcat].[localhost].[/] - Initializing Spring DispatcherServlet 'dispatcherServlet'
+2026-02-03 13:05:56.117 [http-nio-8080-exec-1] INFO  o.s.web.servlet.DispatcherServlet - Initializing Servlet 'dispatcherServlet'
+2026-02-03 13:05:56.118 [http-nio-8080-exec-1] INFO  o.s.web.servlet.DispatcherServlet - Completed initialization in 1 ms
+2026-02-03 13:05:56.165 [http-nio-8080-exec-2] INFO  c.s.k.c.OfflineKYCController - KYC validation request received. RequestId: kyc-1770104156056, FileName: offlineaadhaar20260129021005692.xml
+2026-02-03 13:05:56.165 [http-nio-8080-exec-2] INFO  AUDIT - {timestamp=2026-02-03T07:35:56.165371Z, eventType=KYC_VALIDATION_STARTED, requestId=kyc-1770104156056, customerId=CUST001, fileSize=10165, skipCertExpiryCheck=true, fileName=offlineaadhaar20260129021005692.xml}
+2026-02-03 13:05:56.210 [http-nio-8080-exec-2] INFO  AUDIT - {timestamp=2026-02-03T07:35:56.210285Z, eventType=KYC_VALIDATION_COMPLETED, requestId=kyc-1770104156056, customerId=CUST001, durationMs=45, certificateValid=true, result=VALID, signatureValid=true}
+2026-02-03 13:06:41.490 [http-nio-8080-exec-5] INFO  c.s.k.c.OfflineKYCController - KYC validation request received. RequestId: kyc-1770104201469, FileName: offlineaadhaar20260129021005692.xml
+2026-02-03 13:06:41.490 [http-nio-8080-exec-5] INFO  AUDIT - {timestamp=2026-02-03T07:36:41.490822Z, eventType=KYC_VALIDATION_STARTED, requestId=kyc-1770104201469, customerId=CUST001, fileSize=10165, skipCertExpiryCheck=true, fileName=offlineaadhaar20260129021005692.xml}
+2026-02-03 13:06:41.502 [http-nio-8080-exec-5] INFO  AUDIT - {timestamp=2026-02-03T07:36:41.502638Z, eventType=KYC_VALIDATION_COMPLETED, requestId=kyc-1770104201469, customerId=CUST001, durationMs=12, certificateValid=true, result=VALID, signatureValid=true}

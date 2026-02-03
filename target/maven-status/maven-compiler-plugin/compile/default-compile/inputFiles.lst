@@ -1,0 +1,12 @@
+/Users/supholokar/Documents/Code/offline-kyc/src/main/java/com/sberbank/kyc/OfflineKYCApplication.java
+/Users/supholokar/Documents/Code/offline-kyc/src/main/java/com/sberbank/kyc/model/ValidationResult.java
+/Users/supholokar/Documents/Code/offline-kyc/src/main/java/com/sberbank/kyc/model/KYCValidationResponse.java
+/Users/supholokar/Documents/Code/offline-kyc/src/main/java/com/sberbank/kyc/model/KYCData.java
+/Users/supholokar/Documents/Code/offline-kyc/src/main/java/com/sberbank/kyc/model/CertificateInfo.java
+/Users/supholokar/Documents/Code/offline-kyc/src/main/java/com/sberbank/kyc/model/SignatureValidationResult.java
+/Users/supholokar/Documents/Code/offline-kyc/src/main/java/com/sberbank/kyc/OfflineAadhaarKYCValidator.java
+/Users/supholokar/Documents/Code/offline-kyc/src/main/java/com/sberbank/kyc/model/ShareCodeValidationResult.java
+/Users/supholokar/Documents/Code/offline-kyc/src/main/java/com/sberbank/kyc/service/OfflineKYCService.java
+/Users/supholokar/Documents/Code/offline-kyc/src/main/java/com/sberbank/kyc/controller/OfflineKYCController.java
+/Users/supholokar/Documents/Code/offline-kyc/src/main/java/com/sberbank/kyc/config/CorsConfig.java
+/Users/supholokar/Documents/Code/offline-kyc/src/main/java/com/sberbank/kyc/model/CertificateValidationResult.java
