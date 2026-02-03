@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: offline-kyc-service
+    env: java
+    plan: free
+    buildCommand: mvn clean package -DskipTests
+    startCommand: java -jar target/offline-kyc-validation-2.0.0.jar
+    envVars:
+      - key: JAVA_VERSION
+        value: 17
