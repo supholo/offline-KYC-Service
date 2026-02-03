@@ -117,12 +117,9 @@ spring:
       on-profile: prod
 
 server:
-  port: 8443
+  port: ${PORT:8080}
   ssl:
-    enabled: true
-    key-store: classpath:keystore.p12
-    key-store-password: ${SSL_KEYSTORE_PASSWORD}
-    key-store-type: PKCS12
+    enabled: false
 
 security:
   enabled: true
