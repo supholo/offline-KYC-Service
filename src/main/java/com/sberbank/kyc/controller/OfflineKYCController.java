@@ -38,16 +38,16 @@ public class OfflineKYCController {
     /**
      * Validate offline Aadhaar KYC XML file
      * 
-     * @param xmlFile Offline KYC XML file
+     * @param zipFile Offline KYC XML file
      * @param shareCode 4-digit share code
      * @param customerId Optional customer ID
      * @return Validation response
      */
     @PostMapping(value = "/validate", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @Operation(summary = "Validate offline Aadhaar KYC XML", 
-               description = "Validates XML signature, certificate chain, and extracts KYC data")
+    @Operation(summary = "Validate offline Aadhaar KYC ZIP", 
+               description = "Extracts XML from password-protected ZIP (using shareCode), validates signature, certificate chain, and extracts KYC data")
     public ResponseEntity<KYCApiResponse> validateKYC(
-            @RequestParam("file") MultipartFile xmlFile,
+            @RequestParam("file") MultipartFile zipFile,
             @RequestParam("shareCode") @Pattern(regexp = "\\d{4}") String shareCode,
             @RequestParam(required = false) String mobileNumber,
             @RequestParam(value = "customerId", required = false) String customerId,
@@ -59,12 +59,12 @@ public class OfflineKYCController {
         }
         
         logger.info("KYC validation request received. RequestId: {}, FileName: {}", 
-            requestId, xmlFile.getOriginalFilename());
+            requestId, zipFile.getOriginalFilename());
         
         try {
             // Perform validation
             KYCValidationResponse validationResult = kycService.validateKYC(
-                xmlFile, shareCode, mobileNumber, customerId, requestId);
+            		zipFile, shareCode, mobileNumber, customerId, requestId);
             
             // Build API response
             KYCApiResponse response = buildApiResponse(validationResult, requestId);

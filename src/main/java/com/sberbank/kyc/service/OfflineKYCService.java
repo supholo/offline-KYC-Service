@@ -6,7 +6,6 @@ import com.sberbank.kyc.model.KYCValidationResponse;
 import com.sberbank.kyc.model.ValidationResult;
 
 import org.springframework.stereotype.Service;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.multipart.MultipartFile;
 import org.slf4j.Logger;
@@ -18,6 +17,9 @@ import java.nio.file.*;
 import java.security.cert.*;
 import java.time.*;
 import java.util.*;
+import net.lingala.zip4j.ZipFile;
+import net.lingala.zip4j.model.FileHeader;
+import java.util.Comparator;
 
 /**
  * Spring Boot Service for Offline Aadhaar KYC Validation
@@ -83,37 +85,39 @@ public class OfflineKYCService {
     }
     
     /**
-     * Validate uploaded offline KYC XML file
+     * Validate uploaded offline KYC ZIP file
      * 
-     * @param xmlFile Uploaded XML file
-     * @param shareCode 4-digit share code
+     * @param zipFile Uploaded ZIP file (password protected with shareCode)
+     * @param shareCode 4-digit share code (also ZIP password)
      * @param customerId Customer ID for audit
      * @param requestId Unique request ID for tracking
      * @return KYCValidationResponse with results
      * @throws IOException 
      */
     public KYCValidationResponse validateKYC(
-            MultipartFile xmlFile, 
+            MultipartFile zipFile, 
             String shareCode,
             String mobileNumber,
             String customerId,
             String requestId) throws IOException {
         
-        long startTime = System.currentTimeMillis();
-        Path tempFilePath = null;
-        
+    	long startTime = System.currentTimeMillis();
+    	Path tempFilePath = null;
+    	Path tempDirPath = null;
+
         try {
             // Pre-validation checks
-            validateInputParameters(xmlFile, shareCode);
+            validateInputParameters(zipFile, shareCode);
             
             // Audit: Log validation attempt
             auditLog("KYC_VALIDATION_STARTED", requestId, customerId, 
-                Map.of("fileName", xmlFile.getOriginalFilename(),
-                       "fileSize", xmlFile.getSize(),
+                Map.of("fileName", zipFile.getOriginalFilename(),
+                       "fileSize", zipFile.getSize(),
                        "skipCertExpiryCheck", skipCertExpiryCheck));
             
-            // Save file temporarily for validation
-            tempFilePath = saveTemporaryFile(xmlFile, requestId);
+            // Extract XML from password-protected ZIP
+            tempDirPath = Paths.get(tempDir, requestId);
+            tempFilePath = extractXmlFromZip(zipFile, shareCode, tempDirPath);
             
             // Perform validation (pass skipCertExpiryCheck flag)
             KYCValidationResponse response = validator.validateOfflineKYC(
@@ -145,36 +149,31 @@ public class OfflineKYCService {
             
         } finally {
             // Cleanup: Always delete temporary file
-            cleanupTemporaryFile(tempFilePath);
+        	cleanupTemporaryDirectory(tempDirPath);
         }
     }
     
     /**
      * Pre-validation input checks
      */
-    private void validateInputParameters(MultipartFile xmlFile, String shareCode) 
+    private void validateInputParameters(MultipartFile zipFile, String shareCode) 
             throws ValidationException {
         
-        if (xmlFile == null || xmlFile.isEmpty()) {
-            throw new ValidationException("EMPTY_FILE", "XML file is required");
+        if (zipFile == null || zipFile.isEmpty()) {
+            throw new ValidationException("EMPTY_FILE", "ZIP file is required");
         }
         
-        if (xmlFile.getSize() > maxFileSize) {
+        if (zipFile.getSize() > maxFileSize) {
             throw new ValidationException("FILE_TOO_LARGE", 
                 "File size exceeds maximum allowed: " + maxFileSize + " bytes");
         }
         
-        String contentType = xmlFile.getContentType();
-        if (contentType != null && !contentType.contains("xml") && 
-            !contentType.equals("application/octet-stream")) {
+        String contentType = zipFile.getContentType();
+        if (contentType != null && !contentType.contains("zip") && 
+            !contentType.equals("application/octet-stream") &&
+            !contentType.equals("application/x-zip-compressed")) {
             throw new ValidationException("INVALID_FILE_TYPE", 
-                "Invalid file type. Expected XML file.");
-        }
-        
-        // Validate share code format
-        if (shareCode == null || !shareCode.matches("\\d{4}")) {
-            throw new ValidationException("INVALID_SHARE_CODE", 
-                "Share code must be exactly 4 digits");
+                "Invalid file type. Expected ZIP file.");
         }
     }
     
@@ -211,6 +210,51 @@ public class OfflineKYCService {
                kycData.getPostalCode() != null && kycData.getPostalCode().matches("\\d{6}");
     }
     
+    /**
+     * Extract XML file from password-protected ZIP
+     * 
+     * @param zipFile Uploaded ZIP file
+     * @param shareCode Password for ZIP (4-digit share code)
+     * @param tempDirPath Temporary directory for extraction
+     * @return Path to extracted XML file
+     */
+    private Path extractXmlFromZip(MultipartFile zipFile, String shareCode, Path tempDirPath) 
+            throws IOException, ValidationException {
+        
+        // Create temp directory
+        Files.createDirectories(tempDirPath);
+        
+        // Save ZIP temporarily
+        Path zipPath = tempDirPath.resolve("upload.zip");
+        Files.copy(zipFile.getInputStream(), zipPath, StandardCopyOption.REPLACE_EXISTING);
+        
+        try {
+            // Extract with password (shareCode)
+            ZipFile zip = new ZipFile(zipPath.toFile(), shareCode.toCharArray());
+            
+            // Find XML file in ZIP
+            for (FileHeader header : zip.getFileHeaders()) {
+                if (header.getFileName().toLowerCase().endsWith(".xml")) {
+                    zip.extractFile(header, tempDirPath.toString());
+                    Path xmlPath = tempDirPath.resolve(header.getFileName());
+                    logger.info("Extracted XML file: {}", header.getFileName());
+                    return xmlPath;
+                }
+            }
+            
+            throw new ValidationException("NO_XML_FOUND", "No XML file found in ZIP archive");
+            
+        } catch (net.lingala.zip4j.exception.ZipException e) {
+            if (e.getMessage().contains("Wrong password") || 
+                e.getMessage().contains("invalid password")) {
+                throw new ValidationException("INVALID_ZIP_PASSWORD", 
+                    "Invalid share code - cannot extract ZIP file");
+            }
+            throw new ValidationException("ZIP_EXTRACTION_ERROR", 
+                "Failed to extract ZIP file: " + e.getMessage());
+        }
+    }
+    
     private boolean isAgeValid(String dob) {
         if (dob == null || dob.isEmpty()) return false;
         
@@ -235,19 +279,20 @@ public class OfflineKYCService {
         return photo != null && !photo.isEmpty() && kycData.getPhotoSizeBytes() > 1000;
     }
     
-    private Path saveTemporaryFile(MultipartFile file, String requestId) throws IOException {
-        String fileName = requestId + "_" + System.currentTimeMillis() + ".xml";
-        Path filePath = Paths.get(tempDir, fileName);
-        Files.copy(file.getInputStream(), filePath, StandardCopyOption.REPLACE_EXISTING);
-        return filePath;
-    }
-    
-    private void cleanupTemporaryFile(Path filePath) {
-        if (filePath != null) {
+    private void cleanupTemporaryDirectory(Path dirPath) {
+        if (dirPath != null && Files.exists(dirPath)) {
             try {
-                Files.deleteIfExists(filePath);
+                Files.walk(dirPath)
+                    .sorted(Comparator.reverseOrder())
+                    .forEach(path -> {
+                        try {
+                            Files.delete(path);
+                        } catch (IOException e) {
+                            logger.warn("Failed to delete: {}", path);
+                        }
+                    });
             } catch (IOException e) {
-                logger.warn("Failed to delete temporary file: {}", filePath, e);
+                logger.warn("Failed to cleanup temporary directory: {}", dirPath, e);
             }
         }
     }
