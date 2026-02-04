@@ -14,7 +14,7 @@ public class CorsConfig implements WebMvcConfigurer {
                 .allowedOrigins(
                         "http://localhost:3000",
                         "http://localhost:5173",
-                        "https://offline-kya.onhercules.app"
+                        "https://offline-kyc.onhercules.app"
                 )
                 .allowedMethods(
                         "GET", "POST", "PUT", "DELETE", "OPTIONS"
