@@ -37,20 +37,17 @@ import java.util.Base64;
  */
 public class OfflineAadhaarKYCValidator {
 
-	private static final String UIDAI_ROOT_CERT_PATH = "/certs/uidai-root-ca.cer";
-	private static final String UIDAI_INTERMEDIATE_CERT_PATH = "/certs/uidai-intermediate-ca.cer";
-
 	/**
 	 * Main validation entry point
 	 */
 	public KYCValidationResponse validateOfflineKYC(String xmlFilePath, String shareCode) {
-		return validateOfflineKYC(xmlFilePath, shareCode, null, false, null);
+		return validateOfflineKYC(xmlFilePath, shareCode, null, false, null, null);
 	}
 
 	/**
 	 * Main validation entry point with certificate expiry skip option
 	 */
-	public KYCValidationResponse validateOfflineKYC(String xmlFilePath, String shareCode, String mobileNumber, boolean skipCertExpiryCheck, X509Certificate rootCACert) {
+	public KYCValidationResponse validateOfflineKYC(String xmlFilePath, String shareCode, String mobileNumber, boolean skipCertExpiryCheck, X509Certificate previousPublicKey, X509Certificate latestPublicKey) {
 		KYCValidationResponse response = new KYCValidationResponse();
 		response.setValidationTimestamp(Instant.now());
 
@@ -75,10 +72,10 @@ public class OfflineAadhaarKYCValidator {
 			SignatureValidationResult sigResult;
 			if (hasXMLDSigSignature(document)) {
 				logAuditEvent("SIGNATURE_TYPE", "XMLDSig format detected");
-				sigResult = validateXMLDSigSignature(document);
+				sigResult = validateXMLDSigSignatureWithExternalKeys(document, previousPublicKey, latestPublicKey);
 			} else if (hasLegacySignature(document)) {
 				logAuditEvent("SIGNATURE_TYPE", "Legacy 's' attribute format detected");
-				sigResult = validateLegacySignature(document, xmlContent, rootCACert);
+				sigResult = validateLegacySignatureWithExternalKeys(document, xmlContent, previousPublicKey, latestPublicKey);
 			} else {
 				response.setResult(ValidationResult.INVALID_SIGNATURE);
 				response.setErrorMessage("No signature found in XML document");
@@ -97,8 +94,7 @@ public class OfflineAadhaarKYCValidator {
 			CertificateValidationResult certResult =
 			        validateCertificateChain(
 			            sigResult.getSigningCertificate(),
-			            skipCertExpiryCheck,
-			            rootCACert
+			            skipCertExpiryCheck
 			        );
 			if (!certResult.isValid()) {
 				response.setResult(certResult.getFailureReason());
@@ -213,148 +209,188 @@ public class OfflineAadhaarKYCValidator {
 	}
 
 	/**
-	 * Validate XMLDSig signature
+	 * Validate XMLDSig signature using external UIDAI public keys
+	 * Tries previous key first, then latest key
 	 */
-	private SignatureValidationResult validateXMLDSigSignature(Document document) {
-		SignatureValidationResult result = new SignatureValidationResult();
-
-		try {
-			// Find Signature element
-			NodeList signatureList = document.getElementsByTagNameNS(XMLSignature.XMLNS, "Signature");
-			if (signatureList.getLength() == 0) {
-				result.setValid(false);
-				result.setErrorMessage("No XMLDSig Signature element found");
-				return result;
-			}
-
-			Node signatureNode = signatureList.item(0);
-
-			// Extract certificate from XML first
-			X509Certificate embeddedCert = extractCertificateFromXML(document);
-			if (embeddedCert == null) {
-				result.setValid(false);
-				result.setErrorMessage("No X509Certificate found in signature");
-				return result;
-			}
-
-			logAuditEvent("CERT_EXTRACTED", "Certificate subject: " + embeddedCert.getSubjectX500Principal().getName());
-
-			DOMValidateContext valContext =
-			        new DOMValidateContext(embeddedCert.getPublicKey(), signatureNode);
-
-			// 🔥 CRITICAL FIX: Allow legacy SHA1 for UIDAI Offline KYC
-			valContext.setProperty(
-			        "org.jcp.xml.dsig.secureValidation",
-			        Boolean.FALSE
-			);
-
-			// Unmarshal and validate
-			XMLSignatureFactory factory = XMLSignatureFactory.getInstance("DOM");
-			XMLSignature signature = factory.unmarshalXMLSignature(valContext);
-
-			boolean coreValid = signature.validate(valContext);
-
-			if (coreValid) {
-				result.setValid(true);
-				result.setSigningCertificate(embeddedCert);
-				result.setCertificateInfo(extractCertificateInfo(embeddedCert));
-				logAuditEvent("SIGNATURE_VALID", "XMLDSig signature validated successfully");
-			} else {
-				result.setValid(false);
-
-				// Get detailed failure info
-				StringBuilder errorMsg = new StringBuilder("Signature validation failed. ");
-
-				boolean sigValueValid = signature.getSignatureValue().validate(valContext);
-				errorMsg.append("SignatureValue: ").append(sigValueValid ? "valid" : "INVALID").append(". ");
-
-				@SuppressWarnings("unchecked")
-				List<Reference> refs = (List<Reference>) signature.getSignedInfo().getReferences();
-				for (int i = 0; i < refs.size(); i++) {
-					Reference ref = refs.get(i);
-					boolean refValid = ref.validate(valContext);
-					errorMsg.append("Reference[").append(ref.getURI()).append("]: ")
-							.append(refValid ? "valid" : "INVALID").append(". ");
-
-					if (!refValid) {
-						errorMsg.append("DigestMethod: ").append(ref.getDigestMethod().getAlgorithm()).append(". ");
-						logAuditEvent("DIGEST_MISMATCH",
-								"Expected: " + Base64.getEncoder().encodeToString(ref.getDigestValue()));
-					}
-				}
-
-				result.setErrorMessage(errorMsg.toString());
-				logAuditEvent("SIGNATURE_INVALID", errorMsg.toString());
-			}
-
-		} catch (Exception e) {
-			result.setValid(false);
-			result.setErrorMessage("Signature validation error: " + e.getMessage());
-			logAuditEvent("SIGNATURE_ERROR", e.getMessage());
-			e.printStackTrace();
-		}
-
-		return result;
+	private SignatureValidationResult validateXMLDSigSignatureWithExternalKeys(
+	        Document document, 
+	        X509Certificate previousPublicKey, 
+	        X509Certificate latestPublicKey) {
+	    
+	    SignatureValidationResult result = new SignatureValidationResult();
+	    
+	    // Validate we have at least one public key
+	    if (previousPublicKey == null && latestPublicKey == null) {
+	        result.setValid(false);
+	        result.setErrorMessage("No UIDAI public keys available for signature validation");
+	        return result;
+	    }
+	    
+	    try {
+	        NodeList signatureList = document.getElementsByTagNameNS(XMLSignature.XMLNS, "Signature");
+	        if (signatureList.getLength() == 0) {
+	            result.setValid(false);
+	            result.setErrorMessage("No XMLDSig Signature element found");
+	            return result;
+	        }
+	        
+	        Node signatureNode = signatureList.item(0);
+	        
+	        // Try with PREVIOUS public key first
+	        if (previousPublicKey != null) {
+	            logAuditEvent("SIGNATURE_ATTEMPT", "Trying validation with PREVIOUS public key");
+	            SignatureValidationResult prevResult = tryValidateWithKey(document, signatureNode, previousPublicKey, "PREVIOUS");
+	            if (prevResult.isValid()) {
+	                return prevResult;
+	            }
+	            logAuditEvent("SIGNATURE_ATTEMPT_FAILED", "Previous key validation failed, trying latest key");
+	        }
+	        
+	        // Try with LATEST public key
+	        if (latestPublicKey != null) {
+	            logAuditEvent("SIGNATURE_ATTEMPT", "Trying validation with LATEST public key");
+	            SignatureValidationResult latestResult = tryValidateWithKey(document, signatureNode, latestPublicKey, "LATEST");
+	            if (latestResult.isValid()) {
+	                return latestResult;
+	            }
+	            logAuditEvent("SIGNATURE_ATTEMPT_FAILED", "Latest key validation also failed");
+	        }
+	        
+	        // Both failed
+	        result.setValid(false);
+	        result.setErrorMessage("Signature validation failed with both PREVIOUS and LATEST UIDAI public keys");
+	        logAuditEvent("SIGNATURE_INVALID", "Both public keys failed to validate signature");
+	        
+	    } catch (Exception e) {
+	        result.setValid(false);
+	        result.setErrorMessage("Signature validation error: " + e.getMessage());
+	        logAuditEvent("SIGNATURE_ERROR", e.getMessage());
+	    }
+	    
+	    return result;
 	}
 
 	/**
-	 * Validate legacy signature (s attribute format)
+	 * Try to validate signature with a specific public key
 	 */
-	private SignatureValidationResult validateLegacySignature(
+	private SignatureValidationResult tryValidateWithKey(
+	        Document document,
+	        Node signatureNode, 
+	        X509Certificate publicKey,
+	        String keyType) {
+	    
+	    SignatureValidationResult result = new SignatureValidationResult();
+	    
+	    try {
+	        DOMValidateContext valContext = new DOMValidateContext(publicKey.getPublicKey(), signatureNode);
+	        valContext.setProperty("org.jcp.xml.dsig.secureValidation", Boolean.FALSE);
+	        
+	        XMLSignatureFactory factory = XMLSignatureFactory.getInstance("DOM");
+	        XMLSignature signature = factory.unmarshalXMLSignature(valContext);
+	        
+	        boolean coreValid = signature.validate(valContext);
+	        
+	        if (coreValid) {
+	            result.setValid(true);
+	            result.setSigningCertificate(publicKey);
+	            result.setCertificateInfo(extractCertificateInfo(publicKey));
+	            logAuditEvent("SIGNATURE_VALID", "XMLDSig signature validated with " + keyType + " public key");
+	        } else {
+	            result.setValid(false);
+	            result.setErrorMessage("Signature validation failed with " + keyType + " key");
+	        }
+	        
+	    } catch (Exception e) {
+	        result.setValid(false);
+	        result.setErrorMessage("Validation error with " + keyType + " key: " + e.getMessage());
+	    }
+	    
+	    return result;
+	}
+	
+	/**
+	 * Validate legacy signature using external UIDAI public keys
+	 * Tries previous key first, then latest key
+	 */
+	private SignatureValidationResult validateLegacySignatureWithExternalKeys(
 	        Document document,
 	        String originalXml,
-	        X509Certificate rootCACert) {
-
+	        X509Certificate previousPublicKey,
+	        X509Certificate latestPublicKey) {
+	    
 	    SignatureValidationResult result = new SignatureValidationResult();
-
+	    
+	    if (previousPublicKey == null && latestPublicKey == null) {
+	        result.setValid(false);
+	        result.setErrorMessage("No UIDAI public keys available for legacy signature validation");
+	        return result;
+	    }
+	    
 	    try {
-	        if (rootCACert == null) {
-	            result.setValid(false);
-	            result.setErrorMessage("UIDAI Root CA not provided for legacy signature validation");
-	            return result;
-	        }
-
 	        Element root = document.getDocumentElement();
 	        String signatureB64 = root.getAttribute("s");
-
+	        
 	        if (signatureB64 == null || signatureB64.isEmpty()) {
 	            result.setValid(false);
 	            result.setErrorMessage("No 's' attribute signature found");
 	            return result;
 	        }
-
+	        
 	        // Remove signature attribute before verification
 	        root.removeAttribute("s");
-
-	        // Canonical XML without signature
 	        String xmlWithoutSig = documentToString(document);
-
-	        // Verify legacy RSA signature using UIDAI public key
-	        Signature signature = Signature.getInstance("SHA256withRSA");
-	        signature.initVerify(rootCACert.getPublicKey());
-	        signature.update(xmlWithoutSig.getBytes(StandardCharsets.UTF_8));
-
-	        boolean valid = signature.verify(Base64.getDecoder().decode(signatureB64));
-
-	        if (valid) {
-	            result.setValid(true);
-	            result.setSigningCertificate(rootCACert);
-	            result.setCertificateInfo(extractCertificateInfo(rootCACert));
-	            logAuditEvent("LEGACY_SIGNATURE_VALID", "Legacy Aadhaar signature validated");
-	        } else {
-	            result.setValid(false);
-	            result.setErrorMessage("Legacy signature verification failed");
-	            logAuditEvent("LEGACY_SIGNATURE_INVALID", "Signature mismatch");
+	        byte[] signatureBytes = Base64.getDecoder().decode(signatureB64);
+	        byte[] xmlBytes = xmlWithoutSig.getBytes(StandardCharsets.UTF_8);
+	        
+	        // Try with PREVIOUS public key first
+	        if (previousPublicKey != null) {
+	            logAuditEvent("LEGACY_SIGNATURE_ATTEMPT", "Trying with PREVIOUS public key");
+	            if (verifyLegacySignature(xmlBytes, signatureBytes, previousPublicKey)) {
+	                result.setValid(true);
+	                result.setSigningCertificate(previousPublicKey);
+	                result.setCertificateInfo(extractCertificateInfo(previousPublicKey));
+	                logAuditEvent("LEGACY_SIGNATURE_VALID", "Validated with PREVIOUS public key");
+	                return result;
+	            }
 	        }
-
+	        
+	        // Try with LATEST public key
+	        if (latestPublicKey != null) {
+	            logAuditEvent("LEGACY_SIGNATURE_ATTEMPT", "Trying with LATEST public key");
+	            if (verifyLegacySignature(xmlBytes, signatureBytes, latestPublicKey)) {
+	                result.setValid(true);
+	                result.setSigningCertificate(latestPublicKey);
+	                result.setCertificateInfo(extractCertificateInfo(latestPublicKey));
+	                logAuditEvent("LEGACY_SIGNATURE_VALID", "Validated with LATEST public key");
+	                return result;
+	            }
+	        }
+	        
+	        // Both failed
+	        result.setValid(false);
+	        result.setErrorMessage("Legacy signature validation failed with both public keys");
+	        
 	    } catch (Exception e) {
 	        result.setValid(false);
 	        result.setErrorMessage("Legacy signature validation error: " + e.getMessage());
 	    }
-
+	    
 	    return result;
 	}
 
+	/**
+	 * Verify legacy signature with a specific key
+	 */
+	private boolean verifyLegacySignature(byte[] data, byte[] signatureBytes, X509Certificate publicKey) {
+	    try {
+	        Signature signature = Signature.getInstance("SHA256withRSA");
+	        signature.initVerify(publicKey.getPublicKey());
+	        signature.update(data);
+	        return signature.verify(signatureBytes);
+	    } catch (Exception e) {
+	        return false;
+	    }
+	}
 
 	/**
 	 * Extract X509Certificate from XMLDSig KeyInfo
@@ -381,22 +417,6 @@ public class OfflineAadhaarKYCValidator {
 	}
 
 	/**
-	 * Load UIDAI public key certificate from resources
-	 */
-	private X509Certificate loadUidaiPublicKey() {
-		try {
-			InputStream is = getClass().getResourceAsStream(UIDAI_ROOT_CERT_PATH);
-			if (is == null)
-				return null;
-
-			CertificateFactory cf = CertificateFactory.getInstance("X.509");
-			return (X509Certificate) cf.generateCertificate(is);
-		} catch (Exception e) {
-			return null;
-		}
-	}
-
-	/**
 	 * Convert Document to String
 	 */
 	private String documentToString(Document doc) throws Exception {
@@ -412,7 +432,7 @@ public class OfflineAadhaarKYCValidator {
 	 * Validate certificate chain
 	 */
 	public CertificateValidationResult validateCertificateChain(X509Certificate signingCert, 
-			            boolean skipExpiryCheck, X509Certificate rootCACert) {
+            boolean skipExpiryCheck) {
 			        
 			        CertificateValidationResult result = new CertificateValidationResult();
 			        
@@ -458,22 +478,7 @@ public class OfflineAadhaarKYCValidator {
 			            }
 			            
 			            // Step 3: If root CA provided, validate chain
-			            if (rootCACert != null) {
-			                boolean chainValid = validateChainAgainstRootCA(signingCert, rootCACert, skipExpiryCheck);
-			                if (!chainValid) {
-			                    // Chain validation failed, but this could be due to different CA
-			                    // For UIDAI offline KYC, the embedded cert is self-sufficient
-			                    logAuditEvent("CERT_CHAIN_WARN", 
-			                        "Certificate chain validation against provided root CA failed. " +
-			                        "This may be due to different CA versions. Signature validation already passed.");
-			                    
-			                    // For UIDAI Offline KYC, signature validation is the primary check
-			                    // The embedded certificate in XML is trusted if signature is valid
-			                    result.setValid(true);
-			                    result.setErrorMessage("Chain validation skipped - signature already validated");
-			                    return result;
-			                }
-			            }
+			            
 			            
 			            // Step 4: Verify it's a valid signing certificate
 			            // Check key usage if available
@@ -498,37 +503,6 @@ public class OfflineAadhaarKYCValidator {
 			        return result;
 			    }
 	
-	private boolean validateChainAgainstRootCA(X509Certificate signingCert, 
-			            X509Certificate rootCACert, boolean skipExpiryCheck) {
-			        
-			        try {
-			            // Check if the root CA issued the signing certificate
-			            // This is a simplified check - full PKI validation would use CertPath
-			            
-			            String signingIssuer = signingCert.getIssuerX500Principal().getName();
-			            String rootSubject = rootCACert.getSubjectX500Principal().getName();
-			            
-			            logAuditEvent("CHAIN_COMPARE", 
-			                "Signing cert issuer: " + signingIssuer + ", Root CA subject: " + rootSubject);
-			            
-			            // Try to verify the signing certificate with root CA's public key
-			            // This only works if root CA directly issued the signing cert
-			            try {
-			                signingCert.verify(rootCACert.getPublicKey());
-			                logAuditEvent("CHAIN_VERIFIED", "Signing certificate verified against root CA");
-			                return true;
-			            } catch (Exception e) {
-			                // Direct verification failed - might need intermediate CA
-			                logAuditEvent("CHAIN_VERIFY_FAILED", 
-			                    "Direct chain verification failed: " + e.getMessage());
-			                return false;
-			            }
-			            
-			        } catch (Exception e) {
-			            logAuditEvent("CHAIN_ERROR", e.getMessage());
-			            return false;
-			        }
-			    }
 	/**
 	 * Validate share code
 	 */

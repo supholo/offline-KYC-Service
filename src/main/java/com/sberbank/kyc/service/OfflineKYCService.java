@@ -1,6 +1,7 @@
 package com.sberbank.kyc.service;
 
 import com.sberbank.kyc.*;
+import com.sberbank.kyc.exception.ValidationException;
 import com.sberbank.kyc.model.KYCData;
 import com.sberbank.kyc.model.KYCValidationResponse;
 import com.sberbank.kyc.model.ValidationResult;
@@ -52,9 +53,18 @@ public class OfflineKYCService {
     @Value("${kyc.validation.skip-cert-expiry-check:true}")
     private boolean skipCertExpiryCheck;
     
+    @Value("${kyc.uidai.publickey.latest.path:certs/uidai-public-keys/uidai_offline_publickey_latest.cer}")
+    private String latestPublicKeyPath;
+
+    @Value("${kyc.uidai.publickey.previous.path:certs/uidai-public-keys/uidai_offline_publickey_previous.cer}")
+    private String previousPublicKeyPath;
+    
     private final OfflineAadhaarKYCValidator validator;
     private X509Certificate cachedRootCert;
     private boolean rootCertAvailable = false;
+    private X509Certificate latestPublicKey;
+    private X509Certificate previousPublicKey;
+    private boolean publicKeysAvailable = false;
     
     public OfflineKYCService() {
         this.validator = new OfflineAadhaarKYCValidator();
@@ -72,6 +82,22 @@ public class OfflineKYCService {
             logger.warn("UIDAI root certificate not loaded: {}. Chain validation will be skipped.", e.getMessage());
             logger.warn("This is OK for basic signature validation as the certificate is embedded in the XML.");
             logger.warn("For full chain validation, place certificate in: src/main/resources/certs/uidai-root-ca.cer");
+        }
+        
+        // Load UIDAI public keys for signature validation
+        try {
+            this.previousPublicKey = loadPublicKey(previousPublicKeyPath, "Previous");
+            this.latestPublicKey = loadPublicKey(latestPublicKeyPath, "Latest");
+            this.publicKeysAvailable = (previousPublicKey != null || latestPublicKey != null);
+            
+            if (publicKeysAvailable) {
+                logger.info("UIDAI public keys loaded successfully for signature validation");
+            } else {
+                logger.error("No UIDAI public keys available - signature validation will fail!");
+            }
+        } catch (Exception e) {
+            logger.error("Failed to load UIDAI public keys: {}", e.getMessage());
+            this.publicKeysAvailable = false;
         }
         
         // Create temp directory (required)
@@ -119,9 +145,10 @@ public class OfflineKYCService {
             tempDirPath = Paths.get(tempDir, requestId);
             tempFilePath = extractXmlFromZip(zipFile, shareCode, tempDirPath);
             
-            // Perform validation (pass skipCertExpiryCheck flag)
+            // Perform validation with external public keys (previous first, then latest)
             KYCValidationResponse response = validator.validateOfflineKYC(
-                tempFilePath.toString(), shareCode, mobileNumber, skipCertExpiryCheck, cachedRootCert);
+                tempFilePath.toString(), shareCode, mobileNumber, skipCertExpiryCheck, 
+                previousPublicKey, latestPublicKey);
             
             // Additional banking-specific validations
             if (response.getResult() == ValidationResult.VALID) {
@@ -351,35 +378,41 @@ public class OfflineKYCService {
             return rootCert;
         }
     }
-
-
-    private void validateUidaiRootCA(X509Certificate rootCert) throws Exception {
-
-        // Self-signed verification
-        rootCert.verify(rootCert.getPublicKey());
-
-        // Validity period (Root CA SHOULD be time-valid)
-        rootCert.checkValidity();
-
-        // Must be CA
-        if (rootCert.getBasicConstraints() < 0) {
-            throw new SecurityException("Provided certificate is not a CA");
-        }
-
-        // Must allow cert signing
-        boolean[] ku = rootCert.getKeyUsage();
-        if (ku != null && !ku[5]) {
-            throw new SecurityException("Root CA cannot sign certificates");
-        }
-
-        // UIDAI sanity
-        if (!rootCert.getSubjectX500Principal().getName()
-                .contains("UNIQUE IDENTIFICATION AUTHORITY OF INDIA")) {
-            throw new SecurityException("Not a UIDAI Root CA");
+    
+    /**
+     * Load UIDAI public key certificate from classpath
+     */
+    private X509Certificate loadPublicKey(String path, String keyType) {
+        try {
+            String resourcePath = path.replaceFirst("^classpath:", "");
+            CertificateFactory cf = CertificateFactory.getInstance("X.509");
+            
+            try (InputStream is = Thread.currentThread()
+                    .getContextClassLoader()
+                    .getResourceAsStream(resourcePath)) {
+                
+                if (is == null) {
+                    logger.warn("UIDAI {} public key not found: {}", keyType, resourcePath);
+                    return null;
+                }
+                
+                X509Certificate cert = (X509Certificate) cf.generateCertificate(is);
+                
+                logger.info("UIDAI {} public key loaded. Subject={}, ValidFrom={}, ValidTo={}",
+                    keyType,
+                    cert.getSubjectX500Principal().getName(),
+                    cert.getNotBefore(),
+                    cert.getNotAfter());
+                
+                return cert;
+            }
+        } catch (Exception e) {
+            logger.error("Failed to load UIDAI {} public key: {}", keyType, e.getMessage());
+            return null;
         }
     }
 
-    
+
     private void createTempDirectory() throws IOException {
         Path tempPath = Paths.get(tempDir);
         if (!Files.exists(tempPath)) {
@@ -413,21 +446,16 @@ public class OfflineKYCService {
     public X509Certificate getCachedRootCert() {
         return cachedRootCert;
     }
-}
-
-/**
- * Custom exception for validation errors
- */
-class ValidationException extends Exception {
-    private static final long serialVersionUID = 1L;
-    private final String errorCode;
     
-    public ValidationException(String errorCode, String message) {
-        super(message);
-        this.errorCode = errorCode;
+    public X509Certificate getLatestPublicKey() {
+        return latestPublicKey;
     }
-    
-    public String getErrorCode() {
-        return errorCode;
+
+    public X509Certificate getPreviousPublicKey() {
+        return previousPublicKey;
+    }
+
+    public boolean isPublicKeysAvailable() {
+        return publicKeysAvailable;
     }
 }
